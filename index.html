@@ -37,7 +37,7 @@ input:focus,select:focus,button:focus-visible{outline:2px solid #fff;outline-off
 .pl{display:flex;justify-content:space-between;gap:8px;padding:9px 0;border-top:1px solid var(--bd);cursor:pointer}
 section{display:none}section.on{display:block}
 nav{position:fixed;left:0;right:0;bottom:0;height:calc(var(--nh) + env(safe-area-inset-bottom,0px));display:flex;background:#000;border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom,0px)}
-nav button{flex:1;background:none;color:var(--mu);border:0;border-radius:0;font-weight:500;padding:0}
+nav button{flex:1;font-size:14px;background:none;color:var(--mu);border:0;border-radius:0;font-weight:500;padding:0}
 nav button[aria-current=true]{color:#fff;font-weight:700;box-shadow:inset 0 2px 0 #fff}
 #timer{position:fixed;left:10px;right:10px;bottom:calc(var(--nh) + 8px + env(safe-area-inset-bottom,0px));max-width:500px;margin:0 auto;background:#000;border:1px solid #fff;border-radius:12px;padding:10px 12px;display:flex;align-items:center;gap:8px}
 #timer[hidden]{display:none}
@@ -54,6 +54,7 @@ svg text{fill:#fff;font:11px system-ui,sans-serif}
 <main>
 <section id="train" class="on"></section>
 <section id="plan"></section>
+<section id="hist"></section>
 <section id="prog"></section>
 <section id="data">
   <h1>Backup</h1>
@@ -77,6 +78,7 @@ svg text{fill:#fff;font:11px system-ui,sans-serif}
 <nav>
   <button data-t="train" aria-current="true">Train</button>
   <button data-t="plan">Plan</button>
+  <button data-t="hist">History</button>
   <button data-t="prog">Progress</button>
   <button data-t="data">Backup</button>
 </nav>
@@ -89,16 +91,26 @@ const today=()=>iso(new Date());
 const mmss=s=>Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
 const weekOf=d=>{const x=new Date(d+'T00:00');x.setDate(x.getDate()-(x.getDay()+6)%7);return iso(x)};
 
-let D={splits:[{id:1,n:'Push',x:[]},{id:2,n:'Pull',x:[]},{id:3,n:'Legs',x:[]}],sets:[],cur:1,nid:4};
+let D={splits:[{id:1,n:'Push',x:[]},{id:2,n:'Pull',x:[]},{id:3,n:'Legs',x:[]}],sets:[],wk:[],cur:1,nid:4};
 function adopt(d){
   if(d&&Array.isArray(d.splits)&&Array.isArray(d.sets)){D=d;return true}
-  if(d&&Array.isArray(d.w)){D.sets=d.w.flatMap(x=>x.s.map(s=>({d:x.d,e:s.e,w:s.w,r:s.r})));return true}
+  if(d&&Array.isArray(d.w)){D.wk=[];D.v=0;D.sets=d.w.flatMap(x=>x.s.map(s=>({d:x.d,e:s.e,w:s.w,r:s.r})));return true}
   return false;
 }
-try{adopt(JSON.parse(localStorage.getItem('liftlog2')||localStorage.getItem('liftlog')||'null'))}catch(e){}
 const save=()=>{try{localStorage.setItem('liftlog2',JSON.stringify(D))}catch(e){alert('Could not save. Storage may be full or blocked.')}};
+try{adopt(JSON.parse(localStorage.getItem('liftlog2')||localStorage.getItem('liftlog')||'null'))}catch(e){}
+function fix(){
+  D.wk=D.wk||[];
+  if(D.v!==3){
+    [...new Set(D.sets.filter(s=>!s.wid&&s.d<today()).map(s=>s.d))].sort().forEach(d=>{
+      const id=D.nid++;D.wk.push({id,d,sp:''});D.sets.forEach(s=>{if(!s.wid&&s.d===d)s.wid=id});
+    });
+    D.v=3;save();
+  }
+}
+fix();
 const split=()=>D.splits.find(s=>s.id===D.cur)||D.splits[0];
-const lastOf=n=>{const d=[...new Set(D.sets.filter(s=>s.e===n&&s.d<today()).map(s=>s.d))].sort().pop();return d?D.sets.filter(s=>s.e===n&&s.d===d):[]};
+const lastOf=n=>{const w=Math.max(0,...D.sets.filter(s=>s.e===n&&s.wid).map(s=>s.wid));return w?D.sets.filter(s=>s.e===n&&s.wid===w):[]};
 
 /* ---------- Train ---------- */
 function renderTrain(){
@@ -110,7 +122,7 @@ function renderTrain(){
   let m=null;
   for(const x of [...sp.x].sort((a,b)=>(a.m||'').localeCompare(b.m||''))){
     if(x.m!==m){m=x.m;h+=`<h2>${esc(m||'Other')}</h2>`}
-    const td=D.sets.map((s,i)=>({...s,i})).filter(s=>s.d===today()&&s.e===x.n), last=lastOf(x.n);
+    const td=D.sets.map((s,i)=>({...s,i})).filter(s=>!s.wid&&s.e===x.n), last=lastOf(x.n);
     const pw=td.length?td[td.length-1].w:last.length?last[last.length-1].w:x.w;
     const pr=td.length?td[td.length-1].r:last.length?last[last.length-1].r:x.lo;
     const up=last.length&&Math.min(...last.map(s=>s.r))>=x.hi;
@@ -121,6 +133,7 @@ function renderTrain(){
     <div style="margin:8px 0">${td.map((s,n)=>`<div class="set"><span>Set ${n+1}: ${s.w} kg \u00D7 ${s.r}</span><button class="x" data-del="${s.i}" aria-label="Delete set ${n+1}">Delete</button></div>`).join('')}</div>
     <div class="row"><input id="w${x.id}" type="number" inputmode="decimal" step="any" min="0" value="${pw}" aria-label="Weight in kg"><input id="r${x.id}" type="number" inputmode="numeric" min="1" value="${pr}" aria-label="Reps"><button data-log="${x.id}">Log set ${td.length+1}</button></div></div>`;
   }
+  if(D.sets.some(s=>!s.wid))h+='<button class="full" data-end="1">End workout</button><p class="mu">Saves today\'s sets to History and starts a fresh workout.</p>';
   $('train').innerHTML=h;
 }
 
@@ -216,23 +229,43 @@ function renderProg(){
   $('pe').onchange=e=>{PE=e.target.value;renderProg()};
 }
 
-function renderAll(){renderTrain();renderPlan();renderProg()}
+function renderHist(){
+  const h='<h1>History</h1>',ws=[...D.wk].sort((a,b)=>b.d.localeCompare(a.d)||b.id-a.id);
+  if(!ws.length){$('hist').innerHTML=h+'<p class="empty">Finished workouts show up here. Tap End workout on the Train tab when you are done.</p>';return}
+  $('hist').innerHTML=h+ws.map(w=>{
+    const ss=D.sets.filter(s=>s.wid===w.id),g=new Map();
+    ss.forEach(s=>{if(!g.has(s.e))g.set(s.e,[]);g.get(s.e).push(s)});
+    const dt=new Date(w.d+'T00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+    return `<div class="card"><div class="top"><b>${dt}</b><button class="g sm" data-dw="${w.id}">Delete</button></div><div class="mu">${esc(w.sp||'Workout')} \u00B7 ${ss.length} sets \u00B7 ${g.size} exercises</div>`+
+    [...g].map(([e,l])=>`<div style="margin-top:10px"><b>${esc(e)}</b> <span class="mu">${l.length} sets</span>${l.map((s,n)=>`<div class="set mu"><span>Set ${n+1}</span><span style="color:#fff">${s.w} kg \u00D7 ${s.r}</span></div>`).join('')}</div>`).join('')+'</div>';
+  }).join('');
+}
+function go(id){
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===id));
+  document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-current',b.dataset.t===id));
+  scrollTo(0,0);
+}
+function renderAll(){renderTrain();renderPlan();renderHist();renderProg()}
 
 /* ---------- Events ---------- */
 document.addEventListener('click',ev=>{
   const t=ev.target.closest('button,.pl');if(!t)return;
   const q=t.dataset;
-  if(q.t){
-    document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===q.t));
-    document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-current',b===t));
-    scrollTo(0,0);
-  }
+  if(q.t)go(q.t);
   if(q.sp){D.cur=+q.sp;save();renderTrain()}
   if(q.log){
     const x=split().x.find(e=>e.id===+q.log),w=parseFloat($('w'+x.id).value),r=parseInt($('r'+x.id).value,10);
     if(isNaN(w)||w<0){$('w'+x.id).focus();return}
     if(isNaN(r)||r<1){$('r'+x.id).focus();return}
     D.sets.push({d:today(),e:x.n,w,r});save();renderAll();startRest(x.r);
+  }
+  if(q.end){
+    const a=D.sets.filter(s=>!s.wid);
+    if(!a.length||!confirm('End this workout and save it to History?'))return;
+    const id=D.nid++;D.wk.push({id,d:a[0].d,sp:split()?split().n:''});a.forEach(s=>s.wid=id);T=null;save();renderAll();go('hist');
+  }
+  if(q.dw&&confirm('Delete this workout? It is also removed from your progress chart.')){
+    const id=+q.dw;D.wk=D.wk.filter(w=>w.id!==id);D.sets=D.sets.filter(s=>s.wid!==id);save();renderAll();
   }
   if(q.del!==undefined){D.sets.splice(+q.del,1);save();renderAll()}
   if(q.r!==undefined&&T){if(q.r==='0')T=null;else T.end+=q.r*1000;T&&(T.done=T.end<=Date.now());tick()}
@@ -261,7 +294,7 @@ $('rs').onclick=()=>{
     const d=JSON.parse($('paste').value);
     if(!(d&&((Array.isArray(d.splits)&&Array.isArray(d.sets))||Array.isArray(d.w))))throw 0;
     if(!confirm('Replace all data on this phone with the backup?'))return;
-    adopt(d);save();renderAll();$('msg').textContent='Backup restored.';$('paste').value='';
+    adopt(d);fix();save();renderAll();$('msg').textContent='Backup restored.';$('paste').value='';
   }catch(e){$('msg').textContent='That is not a valid backup.'}
 };
 
