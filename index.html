@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2740d8">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>Lift Log</title>
+<style>
+:root{--bg:#eceff3;--card:#fff;--tx:#14181f;--mu:#667085;--ac:#2740d8;--on:#fff;--bd:#d5dae2;--bad:#c4321f;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181c25;--tx:#e8ebf2;--mu:#8b93a5;--ac:#7f93ff;--on:#0f1218;--bd:#272d3a;--bad:#ff7b66;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;padding-top:env(safe-area-inset-top,0px)}
+main{max-width:520px;margin:0 auto;padding:16px 14px calc(84px + env(safe-area-inset-bottom,0px))}
+h1{font-size:26px;margin:4px 0 14px;letter-spacing:-.02em}
+h2{font-size:15px;margin:18px 0 6px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--mu);margin-bottom:3px}
+input,textarea{width:100%;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:11px}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+.row{display:flex;gap:8px}.row>div{flex:1}
+button{font:inherit;border:0;border-radius:8px;padding:12px 14px;background:var(--ac);color:var(--on);font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--mu);border:1px solid var(--bd);font-weight:500}
+button.x{background:none;color:var(--bad);padding:4px 8px;font-weight:600}
+.full{width:100%;margin-top:10px}
+.hint{font-size:13px;color:var(--mu);margin:8px 0 0;min-height:18px}
+.ex{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--bd);padding:8px 0}
+.ex:first-child{border-top:0}.ex b{font-weight:650}
+.sets{color:var(--mu);font-size:14px}
+.set{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
+.empty{color:var(--mu);text-align:center;padding:24px 8px}
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav button{flex:1;background:none;color:var(--mu);border-radius:0;padding:14px 4px}
+nav button[aria-current=true]{color:var(--ac);box-shadow:inset 0 3px 0 var(--ac)}
+section{display:none}section.on{display:block}
+</style>
+</head>
+<body>
+<main>
+<section id="log" class="on">
+  <h1>Today</h1>
+  <div class="card">
+    <label for="ex">Exercise</label>
+    <input id="ex" list="exs" autocomplete="off" placeholder="e.g. Bench press">
+    <datalist id="exs"></datalist>
+    <div class="row" style="margin-top:10px">
+      <div><label for="w">Weight (kg)</label><input id="w" type="number" inputmode="decimal" step="any" min="0"></div>
+      <div><label for="r">Reps</label><input id="r" type="number" inputmode="numeric" min="1"></div>
+    </div>
+    <p class="hint" id="hint"></p>
+    <button class="full" id="add">Add set</button>
+  </div>
+  <div id="today"></div>
+</section>
+<section id="hist"><h1>History</h1><div id="histList"></div></section>
+<section id="data">
+  <h1>Backup</h1>
+  <div class="card">
+    <p style="margin-top:0">Your workouts are stored only on this phone. Save a backup now and then, especially before clearing browser data.</p>
+    <button class="full" id="dl">Download backup</button>
+    <button class="full ghost" id="cp">Copy backup to clipboard</button>
+  </div>
+  <div class="card">
+    <label for="paste">Restore from backup</label>
+    <textarea id="paste" rows="4" placeholder="Paste backup text here"></textarea>
+    <button class="full ghost" id="rs">Restore</button>
+    <p class="hint" id="msg"></p>
+  </div>
+</section>
+</main>
+<nav>
+  <button data-t="log" aria-current="true">Log</button>
+  <button data-t="hist">History</button>
+  <button data-t="data">Backup</button>
+</nav>
+<script>
+let D={w:[]};
+try{const s=JSON.parse(localStorage.getItem('liftlog')||'null');if(s&&Array.isArray(s.w))D=s}catch(e){}
+const save=()=>{try{localStorage.setItem('liftlog',JSON.stringify(D))}catch(e){alert('Could not save. Storage may be full or blocked.')}};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const todayStr=()=>new Date().toLocaleDateString('en-CA');
+const norm=s=>s.trim().replace(/\s+/g,' ');
+const fmt=s=>`${s.w}\u202Fkg \u00D7 ${s.r}`;
+
+function group(sets){const m=new Map();sets.forEach((s,i)=>{if(!m.has(s.e))m.set(s.e,[]);m.get(s.e).push({...s,i})});return m}
+function names(){return [...new Set(D.w.flatMap(w=>w.s.map(s=>s.e)))].sort()}
+function history(name,excludeDate){
+  const key=name.toLowerCase();
+  const past=D.w.filter(w=>w.d!==excludeDate).sort((a,b)=>b.d.localeCompare(a.d));
+  let last=null,best=null;
+  for(const w of past){for(const s of w.s){if(s.e.toLowerCase()!==key)continue;
+    if(!last||w.d===last.d)(last=last||{d:w.d,s:[]}).s.push(s);
+    if(!best||s.w>best.w||(s.w===best.w&&s.r>best.r))best=s}}
+  return{last,best};
+}
+
+function hint(){
+  const n=norm($('ex').value),h=$('hint');
+  if(!n){h.textContent='';return}
+  const {last,best}=history(n,todayStr());
+  if(!last){h.textContent='First time logging this exercise.';return}
+  h.textContent=`Last (${last.d}): ${last.s.map(fmt).join(', ')}. Best: ${fmt(best)}.`;
+  if(!$('w').value){$('w').value=last.s[last.s.length-1].w;$('r').value=last.s[last.s.length-1].r}
+}
+
+function renderToday(){
+  const w=D.w.find(x=>x.d===todayStr());
+  const el=$('today');
+  if(!w||!w.s.length){el.innerHTML='<p class="empty">No sets yet. Add your first set above.</p>';return}
+  let h='<div class="card">';
+  for(const [e,list] of group(w.s)){
+    h+=`<div class="ex" style="display:block"><b>${esc(e)}</b>`;
+    list.forEach((s,n)=>{h+=`<div class="set"><span>Set ${n+1}: ${fmt(s)}</span><button class="x" data-del="${s.i}" aria-label="Delete set ${n+1} of ${esc(e)}">Delete</button></div>`});
+    h+='</div>';
+  }
+  el.innerHTML=h+'</div>';
+}
+
+function renderHist(){
+  const list=[...D.w].filter(w=>w.s.length).sort((a,b)=>b.d.localeCompare(a.d));
+  if(!list.length){$('histList').innerHTML='<p class="empty">Finished workouts show up here.</p>';return}
+  $('histList').innerHTML=list.map(w=>{
+    const g=[...group(w.s)].map(([e,l])=>`<div class="ex"><b>${esc(e)}</b><span class="sets">${l.map(fmt).join(' \u00B7 ')}</span></div>`).join('');
+    return `<div class="card"><div class="ex" style="border:0;padding-top:0"><b>${esc(w.d)}</b><button class="x" data-wd="${esc(w.d)}">Delete day</button></div>${g}</div>`;
+  }).join('');
+}
+
+function render(){
+  $('exs').innerHTML=names().map(n=>`<option value="${esc(n)}">`).join('');
+  renderToday();renderHist();
+}
+
+$('add').onclick=()=>{
+  const e=norm($('ex').value),w=parseFloat($('w').value),r=parseInt($('r').value,10);
+  if(!e){$('ex').focus();return}
+  if(isNaN(w)||w<0){$('w').focus();return}
+  if(isNaN(r)||r<1){$('r').focus();return}
+  let day=D.w.find(x=>x.d===todayStr());
+  if(!day){day={d:todayStr(),s:[]};D.w.push(day)}
+  day.s.push({e,w,r});
+  save();render();
+  $('hint').textContent=`Added: ${e}, ${fmt({w,r})}.`;
+};
+$('ex').addEventListener('change',()=>{$('w').value='';$('r').value='';hint()});
+$('ex').addEventListener('input',()=>{if(names().some(n=>n.toLowerCase()===norm($('ex').value).toLowerCase()))$('ex').dispatchEvent(new Event('change'))});
+
+document.addEventListener('click',ev=>{
+  const t=ev.target;
+  if(t.dataset.del!==undefined){
+    const day=D.w.find(x=>x.d===todayStr());day.s.splice(+t.dataset.del,1);
+    if(!day.s.length)D.w=D.w.filter(x=>x!==day);
+    save();render();
+  }
+  if(t.dataset.wd&&confirm('Delete all sets from '+t.dataset.wd+'?')){D.w=D.w.filter(x=>x.d!==t.dataset.wd);save();render()}
+  if(t.dataset.t){
+    document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===t.dataset.t));
+    document.querySelectorAll('nav button').forEach(b=>b.setAttribute('aria-current',b===t));
+    scrollTo(0,0);
+  }
+});
+
+$('dl').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(D)],{type:'application/json'}));
+  a.download='liftlog-'+todayStr()+'.json';a.click();
+};
+$('cp').onclick=async()=>{
+  try{await navigator.clipboard.writeText(JSON.stringify(D));$('msg').textContent='Backup copied. Paste it into a note to keep it.'}
+  catch(e){$('msg').textContent='Copy failed. Use Download backup instead.'}
+};
+$('rs').onclick=()=>{
+  try{
+    const d=JSON.parse($('paste').value);
+    if(!d||!Array.isArray(d.w))throw 0;
+    if(!confirm('Replace all data on this phone with the backup?'))return;
+    D=d;save();render();$('msg').textContent='Restored '+D.w.length+' workout days.';$('paste').value='';
+  }catch(e){$('msg').textContent='That is not a valid backup.'}
+};
+
+render();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
